@@ -2,9 +2,11 @@
 #include <LedControl.h>
 #include <Wire.h>
 #include <VL53L0X.h>
+#include <Math.h>
 #include "font5x7.h"
 
-const unsigned char scrollText[] PROGMEM = {"12141  \0"};
+const unsigned char welcomeHome[] PROGMEM = {"Welcome home!        \0"};
+const unsigned char initComplete[] PROGMEM = {"Init complete!        \0"};
 
 #define NUM_DEVICES 3
 
@@ -20,7 +22,7 @@ LedControl lc = LedControl(8, 6, 5, NUM_DEVICES);
 
 VL53L0X sensor;
 
-const long _scrollDelay = 75;   // adjust scrolling speed
+const long _scrollDelay = 40;   // adjust scrolling speed
 
 unsigned long _bufferLong [14] = {0};
 unsigned int _brightness = 4;
@@ -109,10 +111,8 @@ void printText(const char * messageString, unsigned int kernOffset) {
       for (int a = 0; a < 7; a++) { // Loop 7 times for a 5x7 font
           unsigned long c = pgm_read_byte_near(_font5x7 + ((ascii - 0x20) * 8) + a); // Index into character table to get row data
           buf[device][a] |= (c >> kerningPos);
-          lc.setRow(device, a, buf[device][a]);
           if (device + 1 < NUM_DEVICES) {
             buf[device + 1][a] |= (c << (8 - kerningPos));
-            lc.setRow(device + 1, a, buf[device + 1][a]);
           }
       }
       kerningPos += kerningLength;
@@ -126,19 +126,24 @@ void printText(const char * messageString, unsigned int kernOffset) {
     }
     i++;
   }
-  for (int i = device + 1; i < NUM_DEVICES; i++) {
-    lc.clearDisplay(i);
+  for (int i = 0; i < NUM_DEVICES; i++) {
+    for (int a = 0; a < 7; a++) { // Loop 7 times for a 5x7 font
+      lc.setRow(i, a, buf[i][a]);
+    }
   }
 }
 
 void readAndDisplayRange() {
   uint16_t mm = sensor.readRangeContinuousMillimeters();
   if (sensor.timeoutOccurred()) {
-    printText("----", 1);
+    printText("ERR", 1);
   }
   else {
     char buf[10];
-    sprintf(buf, "%d", (mm / 1));
+    int cm = round(mm / 10.0);
+    if (cm < 100) sprintf(buf, "%dcm", cm);
+    else if (cm == 100) sprintf(buf, "1m");
+    else sprintf(buf, ">1m");
     printText(buf, 1);
   }
 }
@@ -174,6 +179,7 @@ void setup() {
   //printChar('a');
   //scrollMessage(scrollText);
   //printText("220", 1);
+  scrollMessage(initComplete);
 }
 
 void loop() {
