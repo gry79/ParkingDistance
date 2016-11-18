@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <LedControl.h>
+#include <Wire.h>
+#include <VL53L0X.h>
 #include "font5x7.h"
 
 const unsigned char scrollText[] PROGMEM = {"12141  \0"};
@@ -9,12 +11,14 @@ const unsigned char scrollText[] PROGMEM = {"12141  \0"};
 /*
  Now we need a LedControl to work with.
  ***** These pin numbers will probably not work with your hardware *****
- pin 12 is connected to the DataIn
- pin 11 is connected to the CLK
- pin 10 is connected to LOAD
+ pin 8 is connected to the DataIn
+ pin 6 is connected to the CLK
+ pin 5 is connected to LOAD
  We have only a single MAX72XX.
  */
-LedControl lc = LedControl(8, 10, 9, NUM_DEVICES);
+LedControl lc = LedControl(8, 6, 5, NUM_DEVICES);
+
+VL53L0X sensor;
 
 const long _scrollDelay = 75;   // adjust scrolling speed
 
@@ -122,8 +126,22 @@ void printText(const char * messageString, unsigned int kernOffset) {
     }
     i++;
   }
+  for (int i = device + 1; i < NUM_DEVICES; i++) {
+    lc.clearDisplay(i);
+  }
 }
 
+void readAndDisplayRange() {
+  uint16_t mm = sensor.readRangeContinuousMillimeters();
+  if (sensor.timeoutOccurred()) {
+    printText("----", 1);
+  }
+  else {
+    char buf[10];
+    sprintf(buf, "%d", (mm / 1));
+    printText(buf, 1);
+  }
+}
 
 void setup() {
   for (int i = 0; i < NUM_DEVICES; i++) {
@@ -138,16 +156,26 @@ void setup() {
     lc.clearDisplay(i);
   }
 
+  Serial.begin(9600);
+  Wire.begin();
+
+  sensor.init();
+  sensor.setTimeout(500);
+
+  // High accuracy
+  sensor.setMeasurementTimingBudget(200000);
+
+  // continuous mode, 100ms
+  sensor.startContinuous(200);
 
   //resetKerningPos();
   //printChar('a');
   //printChar('a');
   //printChar('a');
   //scrollMessage(scrollText);
-  printText("220", 1);
+  //printText("220", 1);
 }
 
 void loop() {
-
-
+  readAndDisplayRange();
 }
