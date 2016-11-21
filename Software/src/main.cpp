@@ -3,30 +3,114 @@
 #include <Wire.h>
 #include <VL53L0X.h>
 #include <Math.h>
+#include <Bounce2.h>
+#include <EEPROM.h>
 #include "font5x7.h"
 
 const unsigned char welcomeHome[] PROGMEM = {"Welcome home!        \0"};
-const unsigned char initComplete[] PROGMEM = {"Init complete!        \0"};
+const unsigned char initComplete[] PROGMEM = {"Jul-O-Meter v1.0        \0"};
 
 #define NUM_DEVICES 3
 
-/*
- Now we need a LedControl to work with.
- ***** These pin numbers will probably not work with your hardware *****
- pin 8 is connected to the DataIn
- pin 6 is connected to the CLK
- pin 5 is connected to LOAD
- We have only a single MAX72XX.
- */
-LedControl lc = LedControl(8, 6, 5, NUM_DEVICES);
+#define PIN_I2C_DATA 8
+#define PIN_I2C_CLK 6
+#define PIN_I2C_LOAD 5
+
+#define PIN_LED_WARN 3
+#define PIN_BRIGHT_UP 10
+#define PIN_BRIGHT_DOWN 9
+#define PIN_SET 13
+
+LedControl lc = LedControl(PIN_I2C_DATA, PIN_I2C_CLK, PIN_I2C_LOAD, NUM_DEVICES);
 
 VL53L0X sensor;
+
+Bounce _btnSet = Bounce();
+Bounce _btnBriUp = Bounce();
+Bounce _btnBriDown = Bounce();
 
 const long _scrollDelay = 40;   // adjust scrolling speed
 
 unsigned long _bufferLong [14] = {0};
-unsigned int _brightness = 4;
+unsigned int _brightness = 8;
+uint16_t _zeroCorrection = 0;
 unsigned int _kerningPos = 0;
+byte _highAccuracy = false;
+byte _powerSave = true;
+
+void writeSettings() {
+  EEPROM.write(0, 0x55);
+  EEPROM.write(1, 0x55);
+
+  // Brightness range from 0..15
+  if (_brightness > 15) _brightness = 15;
+
+  EEPROM.write(2, _brightness);
+  EEPROM.write(3, (_zeroCorrection >> 8) & 0xFF);
+  EEPROM.write(4, _zeroCorrection & 0xFF);
+}
+
+void readSettings() {
+  _brightness = (uint8_t) EEPROM.read(2) & 0xFF;
+  _zeroCorrection = ((uint16_t) EEPROM.read(3) << 8) & 0xFFFF;
+  _zeroCorrection += (uint16_t) EEPROM.read(4) & 0xFF;
+}
+
+void initEEPROM() {
+  if (!(EEPROM.read(0) == 0x55 && EEPROM.read(1) == 0x55)) {
+    writeSettings();
+  }
+}
+
+void setLongRange() {
+  if (_highAccuracy == true) {
+    sensor.stopContinuous();
+    // lower the return signal rate limit (default is 0.25 MCPS)
+    sensor.setSignalRateLimit(0.1);
+    // increase laser pulse periods (defaults are 14 and 10 PCLKs)
+    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 18);
+    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
+    sensor.startContinuous(200);
+    _highAccuracy = false;
+  }
+}
+
+void setHighAccuracy() {
+  if (_highAccuracy == false) {
+    sensor.stopContinuous();
+    sensor.setSignalRateLimit(0.25);
+    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 14);
+    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 10);
+    sensor.startContinuous(200);
+    _highAccuracy = true;
+  }
+}
+
+void setDisplayBrightness() {
+  for (int i = 0; i < NUM_DEVICES; i++) {
+    lc.setIntensity(i, _brightness);
+  }
+}
+
+void setPowersaveMode() {
+  if (_powerSave == true) return;
+  for (int i = 0; i < NUM_DEVICES; i++) {
+    lc.clearDisplay(i);
+    lc.shutdown(i, true);
+  }
+  _powerSave = true;
+}
+
+void setOperationMode() {
+  if (_powerSave == false) return;
+  for (int i = 0; i < NUM_DEVICES; i++) {
+    lc.shutdown(i, false);
+    // Brightness
+    lc.setIntensity(i, _brightness);
+    lc.clearDisplay(i);
+  }
+  _powerSave = false;
+}
 
 // Rotate the buffer
 void rotateBufferLong(){
@@ -133,35 +217,26 @@ void printText(const char * messageString, unsigned int kernOffset) {
   }
 }
 
-void readAndDisplayRange() {
-  uint16_t mm = sensor.readRangeContinuousMillimeters();
-  if (sensor.timeoutOccurred()) {
-    printText("ERR", 1);
-  }
-  else {
-    char buf[10];
-    int cm = round(mm / 10.0);
-    if (cm < 100) sprintf(buf, "%dcm", cm);
-    else if (cm == 100) sprintf(buf, "1m");
-    else sprintf(buf, ">1m");
-    printText(buf, 1);
-  }
-}
-
 void setup() {
-  for (int i = 0; i < NUM_DEVICES; i++) {
-    /*
-     The MAX72XX is in power-saving mode on startup,
-     we have to do a wakeup call
-     */
-    lc.shutdown(i, false);
-    /* Set the brightness to a medium values */
-    lc.setIntensity(i, _brightness);
-    /* and clear the display */
-    lc.clearDisplay(i);
-  }
+  pinMode(PIN_SET, INPUT);
+  pinMode(PIN_BRIGHT_DOWN, INPUT);
+  pinMode(PIN_BRIGHT_UP, INPUT);
 
-  Serial.begin(9600);
+  _btnSet.attach(PIN_SET);
+  _btnSet.interval(50); // 50 ms
+
+  _btnBriUp.attach(PIN_BRIGHT_UP);
+  _btnBriUp.interval(50); // 50 ms
+
+  _btnBriDown.attach(PIN_BRIGHT_DOWN);
+  _btnBriDown.interval(50); // 50 ms
+
+  pinMode(PIN_LED_WARN, OUTPUT);
+  digitalWrite(PIN_LED_WARN, LOW);
+
+  initEEPROM();
+  readSettings();
+
   Wire.begin();
 
   sensor.init();
@@ -170,18 +245,96 @@ void setup() {
   // High accuracy
   sensor.setMeasurementTimingBudget(200000);
 
-  // continuous mode, 100ms
-  sensor.startContinuous(200);
+  setHighAccuracy();
 
-  //resetKerningPos();
-  //printChar('a');
-  //printChar('a');
-  //printChar('a');
-  //scrollMessage(scrollText);
-  //printText("220", 1);
+  setOperationMode();
+
   scrollMessage(initComplete);
 }
 
 void loop() {
-  readAndDisplayRange();
+  uint16_t mm = sensor.readRangeContinuousMillimeters();
+  static uint16_t lastCm = round(mm / 10.0);
+  static unsigned long lastUpdate = millis();
+
+  if (sensor.timeoutOccurred()) {
+    printText("ERR", 1);
+    mm = UINT16_MAX;
+  }
+  else {
+    char buf[10];
+    uint16_t cm = round(mm / 10.0);
+
+    if (cm < 100) {
+      sprintf(buf, "%dcm", cm);
+    }
+    else if (cm >= 100 && cm < 110) {
+      sprintf(buf, "1.0m");
+    }
+    else {
+      sprintf(buf, ">1.1m");
+    }
+    printText(buf, 1);
+
+    for (int i = 0; i < NUM_DEVICES; i++) {
+      int leds = cm - (16 * i);
+      byte val = 0x00;
+      switch (leds) {
+        case  0: val = 0x00; break;
+        case  1:
+        case  2: val = B10000000; break;
+        case  3:
+        case  4: val = B11000000; break;
+        case  5:
+        case  6: val = B11100000; break;
+        case  7:
+        case  8: val = B11110000; break;
+        case  9:
+        case 10: val = B11111000; break;
+        case 11:
+        case 12: val = B11111100; break;
+        case 13:
+        case 14: val = B11111110; break;
+        case 15:
+        case 16: val = B11111111; break;
+      }
+      if (leds > 16) val = B11111111;
+      lc.setRow(i, 7, val);
+    }
+
+    if (cm != lastCm) {
+      lastUpdate = millis();
+      setOperationMode();
+    }
+    else if (millis() - lastUpdate > 60000) {
+      setPowersaveMode();
+    }
+
+    lastCm = cm;
+  }
+
+  _btnSet.update();
+  _btnBriUp.update();
+  _btnBriDown.update();
+
+  if (_btnSet.fell()) {
+    _zeroCorrection = mm;
+    writeSettings();
+  }
+
+  if (_btnBriUp.fell()) {
+    if (_brightness < 15) {
+      _brightness++;
+      setDisplayBrightness();
+      writeSettings();
+    }
+  }
+
+  if (_btnBriDown.fell()) {
+    if (_brightness > 1) {
+      _brightness--;
+      setDisplayBrightness();
+      writeSettings();
+    }
+  }
 }

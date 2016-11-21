@@ -123,8 +123,8 @@ const unsigned char _font5x7 [] PROGMEM = { // Numeric Font Matrix (Arranged as 
 
     B00000000,	//-
     B00000000,
-    B11111000,
     B00000000,
+    B11111000,
     B00000000,
     B00000000,
     B00000000,
