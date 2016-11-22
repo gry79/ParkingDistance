@@ -7,8 +7,9 @@
 #include <EEPROM.h>
 #include "font5x7.h"
 
-const unsigned char welcomeHome[] PROGMEM = {"Welcome home!        \0"};
-const unsigned char initComplete[] PROGMEM = {"Jul-O-Meter v1.0        \0"};
+const unsigned char welcome[] PROGMEM = {"Welcome!     \0"};
+const unsigned char goodBye[] PROGMEM = {"Good bye!     \0"};
+const unsigned char initComplete[] PROGMEM = {"Jul-O-Meter v1.0     \0"};
 
 #define NUM_DEVICES 3
 
@@ -21,6 +22,10 @@ const unsigned char initComplete[] PROGMEM = {"Jul-O-Meter v1.0        \0"};
 #define PIN_BRIGHT_DOWN 9
 #define PIN_SET 13
 
+#define POWER_OFF_MS 60000
+
+//#define DIST_BAR
+
 LedControl lc = LedControl(PIN_I2C_DATA, PIN_I2C_CLK, PIN_I2C_LOAD, NUM_DEVICES);
 
 VL53L0X sensor;
@@ -29,7 +34,7 @@ Bounce _btnSet = Bounce();
 Bounce _btnBriUp = Bounce();
 Bounce _btnBriDown = Bounce();
 
-const long _scrollDelay = 40;   // adjust scrolling speed
+const long _scrollDelay = 30;   // adjust scrolling speed
 
 unsigned long _bufferLong [14] = {0};
 unsigned int _brightness = 8;
@@ -105,11 +110,17 @@ void setOperationMode() {
   if (_powerSave == false) return;
   for (int i = 0; i < NUM_DEVICES; i++) {
     lc.shutdown(i, false);
+    lc.clearDisplay(i);
     // Brightness
     lc.setIntensity(i, _brightness);
-    lc.clearDisplay(i);
   }
   _powerSave = false;
+}
+
+void clearAll() {
+  for (int i = 0; i < NUM_DEVICES; i++) {
+    lc.clearDisplay(i);
+  }
 }
 
 // Rotate the buffer
@@ -162,6 +173,7 @@ void loadBufferLong(int ascii){
 
 // Scroll Message
 void scrollMessage(const unsigned char * messageString) {
+  clearAll();
     int counter = 0;
     int myChar=0;
     do {
@@ -276,6 +288,7 @@ void loop() {
     }
     printText(buf, 1);
 
+#ifdef DIST_BAR
     for (int i = 0; i < NUM_DEVICES; i++) {
       int leds = cm - (16 * i);
       byte val = 0x00;
@@ -301,26 +314,36 @@ void loop() {
       if (leds > 16) val = B11111111;
       lc.setRow(i, 7, val);
     }
+#endif
 
     if (cm != lastCm) {
       lastUpdate = millis();
-      setOperationMode();
+      if (_powerSave == true) {
+        setOperationMode();
+        if (cm > lastCm) {
+          scrollMessage(goodBye);
+        }
+        else if (cm < lastCm) {
+          scrollMessage(welcome);
+        }
+      }
     }
-    else if (millis() - lastUpdate > 60000) {
+    else if (millis() - lastUpdate > POWER_OFF_MS) {
       setPowersaveMode();
     }
 
     lastCm = cm;
+
+    _btnSet.update();
+
+    if (_btnSet.fell()) {
+      _zeroCorrection = mm;
+      writeSettings();
+    }
   }
 
-  _btnSet.update();
   _btnBriUp.update();
   _btnBriDown.update();
-
-  if (_btnSet.fell()) {
-    _zeroCorrection = mm;
-    writeSettings();
-  }
 
   if (_btnBriUp.fell()) {
     if (_brightness < 15) {
