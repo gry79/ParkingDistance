@@ -42,6 +42,7 @@ uint16_t _zeroCorrection = 0;
 unsigned int _kerningPos = 0;
 byte _highAccuracy = false;
 byte _powerSave = true;
+byte _warnBlink = false;
 
 void writeSettings() {
   EEPROM.write(0, 0x55);
@@ -65,6 +66,12 @@ void initEEPROM() {
   if (!(EEPROM.read(0) == 0x55 && EEPROM.read(1) == 0x55)) {
     writeSettings();
   }
+}
+
+void blinkWarn() {
+  digitalWrite(PIN_LED_WARN, HIGH);
+  delay(100);
+  digitalWrite(PIN_LED_WARN, LOW);
 }
 
 void setLongRange() {
@@ -235,13 +242,13 @@ void setup() {
   pinMode(PIN_BRIGHT_UP, INPUT);
 
   _btnSet.attach(PIN_SET);
-  _btnSet.interval(50); // 50 ms
+  _btnSet.interval(10); // 10 ms
 
   _btnBriUp.attach(PIN_BRIGHT_UP);
-  _btnBriUp.interval(50); // 50 ms
+  _btnBriUp.interval(10); // 10 ms
 
   _btnBriDown.attach(PIN_BRIGHT_DOWN);
-  _btnBriDown.interval(50); // 50 ms
+  _btnBriDown.interval(10); // 10 ms
 
   pinMode(PIN_LED_WARN, OUTPUT);
   digitalWrite(PIN_LED_WARN, LOW);
@@ -265,7 +272,14 @@ void setup() {
 }
 
 void loop() {
-  uint16_t mm = sensor.readRangeContinuousMillimeters();
+  uint16_t mmRead = sensor.readRangeContinuousMillimeters();
+  uint16_t mm = mmRead;
+  if (mm - _zeroCorrection > mm) {
+    mm = 0;
+  }
+  else {
+    mm -= _zeroCorrection;
+  }
   static uint16_t lastCm = round(mm / 10.0);
   static unsigned long lastUpdate = millis();
 
@@ -276,6 +290,14 @@ void loop() {
   else {
     char buf[10];
     uint16_t cm = round(mm / 10.0);
+
+    if (cm == 0) {
+      _warnBlink = true;
+    }
+    else {
+      _warnBlink = false;
+      digitalWrite(PIN_LED_WARN, LOW);
+    }
 
     if (cm < 100) {
       sprintf(buf, "%dcm", cm);
@@ -334,11 +356,16 @@ void loop() {
 
     lastCm = cm;
 
+    if (_warnBlink == true) {
+      digitalWrite(PIN_LED_WARN, digitalRead(PIN_LED_WARN) == HIGH ? LOW : HIGH);
+    }
+
     _btnSet.update();
 
     if (_btnSet.fell()) {
-      _zeroCorrection = mm;
+      _zeroCorrection = mmRead;
       writeSettings();
+      blinkWarn();
     }
   }
 
@@ -350,6 +377,7 @@ void loop() {
       _brightness++;
       setDisplayBrightness();
       writeSettings();
+      blinkWarn();
     }
   }
 
@@ -358,6 +386,7 @@ void loop() {
       _brightness--;
       setDisplayBrightness();
       writeSettings();
+      blinkWarn();
     }
   }
 }
