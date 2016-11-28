@@ -22,7 +22,7 @@ const unsigned char initComplete[] PROGMEM = {"Jul-O-Meter v1.0     \0"};
 #define PIN_BRIGHT_DOWN 9
 #define PIN_SET 13
 
-#define POWER_OFF_MS 60000
+#define POWER_OFF_MS 30000
 
 //#define DIST_BAR
 
@@ -34,13 +34,12 @@ Bounce _btnSet = Bounce();
 Bounce _btnBriUp = Bounce();
 Bounce _btnBriDown = Bounce();
 
-const long _scrollDelay = 30;   // adjust scrolling speed
+const long _scrollDelay = 15;   // adjust scrolling speed
 
 unsigned long _bufferLong [14] = {0};
 unsigned int _brightness = 8;
 uint16_t _zeroCorrection = 0;
 unsigned int _kerningPos = 0;
-byte _highAccuracy = false;
 byte _powerSave = true;
 byte _warnBlink = false;
 
@@ -74,30 +73,6 @@ void blinkWarn() {
   digitalWrite(PIN_LED_WARN, LOW);
 }
 
-void setLongRange() {
-  if (_highAccuracy == true) {
-    sensor.stopContinuous();
-    // lower the return signal rate limit (default is 0.25 MCPS)
-    sensor.setSignalRateLimit(0.1);
-    // increase laser pulse periods (defaults are 14 and 10 PCLKs)
-    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 18);
-    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
-    sensor.startContinuous(200);
-    _highAccuracy = false;
-  }
-}
-
-void setHighAccuracy() {
-  if (_highAccuracy == false) {
-    sensor.stopContinuous();
-    sensor.setSignalRateLimit(0.25);
-    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 14);
-    sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 10);
-    sensor.startContinuous(200);
-    _highAccuracy = true;
-  }
-}
-
 void setDisplayBrightness() {
   for (int i = 0; i < NUM_DEVICES; i++) {
     lc.setIntensity(i, _brightness);
@@ -110,6 +85,10 @@ void setPowersaveMode() {
     lc.clearDisplay(i);
     lc.shutdown(i, true);
   }
+
+  _warnBlink = false;
+  digitalWrite(PIN_LED_WARN, LOW);
+
   _powerSave = true;
 }
 
@@ -260,11 +239,7 @@ void setup() {
 
   sensor.init();
   sensor.setTimeout(500);
-
-  // High accuracy
-  sensor.setMeasurementTimingBudget(200000);
-
-  setHighAccuracy();
+  sensor.startContinuous(200);
 
   setOperationMode();
 
@@ -291,7 +266,7 @@ void loop() {
     char buf[10];
     uint16_t cm = round(mm / 10.0);
 
-    if (cm == 0) {
+    if (cm == 0 && _powerSave == false) {
       _warnBlink = true;
     }
     else {
